@@ -2,41 +2,77 @@ import requests
 import boto3
 import uuid
 
-# Initialize DynamoDB
-dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table('GithubRepos')
+# --- CONFIG ---
+RAPID_API_KEY = "33c24667c8msh7d540b55c83366ap153281jsn8da59a3f892c"  # Your key
+PLAYER_ID = "28003"  # Lionel Messi
+URL = f"https://transfermarkt6.p.rapidapi.com/players/market-value-progress?id={PLAYER_ID}"
 
-# Step 1: Extract from GitHub API
+HEADERS = {
+    "x-rapidapi-host": "transfermarkt6.p.rapidapi.com",
+    "x-rapidapi-key": RAPID_API_KEY
+}
+
+# DynamoDB Setup
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('PlayerMarketValue')
+
+# --- EXTRACT ---
 def extract():
-    response = requests.get('https://api.github.com/orgs/aws/repos')
+    response = requests.get(URL, headers=HEADERS)
     if response.status_code == 200:
+        print("✅ API call successful.")
         return response.json()
     else:
-        raise Exception("GitHub API failed")
+        raise Exception(f"API failed: {response.status_code} {response.text}")
 
-# Step 2: Transform data
-def transform(repos):
-    return [
-        {
-            "id": str(uuid.uuid4()),  # unique ID
-            "name": repo["name"],
-            "url": repo["html_url"],
-            "language": repo["language"] or "Unknown",
-        }
-        for repo in repos
-    ]
+# --- TRANSFORM ---
+def transform(data):
+    share = data.get("data", {}).get("share", {})
+    values = data.get("data", {}).get("marketValueDevelopment", [])
 
-# Step 3: Load into DynamoDB
-def load(data):
-    for item in data:
+    player_name = share.get("title", "Unknown Player")
+    profile_url = share.get("url", "")
+    description = share.get("description", "")
+
+    transformed_items = []
+    for entry in values:
+        transformed_items.append({
+            "id": str(uuid.uuid4()),
+            "playerName": player_name,
+            "profileUrl": profile_url,
+            "description": description,
+            "date": entry.get("date", "Unknown"),
+            "marketValue": entry.get("value", "N/A")
+        })
+
+    return transformed_items
+
+# --- LOAD ---
+def load(items):
+    if not items:
+        print("⚠️ No data to load.")
+        return
+    for item in items:
         table.put_item(Item=item)
-    print(f"Loaded {len(data)} items into DynamoDB")
+    print(f"✅ Loaded {len(items)} entries into DynamoDB.")
 
-def run_pipeline():
-    raw_data = extract()
-    transformed = transform(raw_data)
-    load(transformed)
+# --- DISPLAY ---
+def print_table():
+    items = table.scan().get('Items', [])
+    if not items:
+        print("ℹ️ Table is empty.")
+        return
+    print("\n📈 Player Market Value History:")
+    for item in sorted(items, key=lambda x: x['date']):
+        print(f"{item['date']} - {item['playerName']}: {item['marketValue']}")
+
+# --- RUN ---
+def run():
+    raw = extract()
+    cleaned = transform(raw)
+    load(cleaned)
+    print_table()
 
 if __name__ == "__main__":
-    run_pipeline()
+    run()
 
