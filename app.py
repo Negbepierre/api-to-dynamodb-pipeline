@@ -14,11 +14,14 @@ player_options = {
 }
 
 # --- UI HEADER ---
+st.set_page_config(page_title="Market Value Tracker", page_icon="⚽")
 st.title("⚽ Player Market Value Tracker")
+
+# --- PLAYER SELECTION ---
 player_name = st.selectbox("Choose a player", list(player_options.keys()))
 player_id = player_options[player_name]
 
-# --- FETCH DATA ---
+# --- API CALL FUNCTION ---
 def get_market_values(player_id):
     url = f"https://{API_HOST}/players/market-value-progress?id={player_id}"
     headers = {
@@ -28,7 +31,7 @@ def get_market_values(player_id):
     response = requests.get(url, headers=headers)
     if response.status_code != 200:
         return [], f"API Error: {response.status_code}"
-    
+
     data = response.json().get("data", {})
     share = data.get("share", {})
     history = data.get("marketValueDevelopment", [])
@@ -40,15 +43,16 @@ def get_market_values(player_id):
         "name": share.get("title")
     } for h in history], None
 
-# --- DISPLAY DATA ---
+# --- FETCH DATA ---
 data, error = get_market_values(player_id)
 
+# --- HANDLE RESPONSE ---
 if error:
     st.error(error)
 else:
     st.success(f"Loaded {len(data)} entries for {player_name}")
 
-    # Value filter
+    # --- FILTER ---
     min_value = st.slider("Minimum value (€m)", 0, 200, 0, step=5)
     filtered = [
         d for d in data 
@@ -58,10 +62,12 @@ else:
     st.subheader("📊 Market Value History")
     st.write(filtered)
 
-    # Plot
+    # --- PLOT ---
     try:
         df = pd.DataFrame(filtered)
-        df["date"] = pd.to_datetime(df["date"])
+        df = df[df["date"].notnull()]  # Remove null dates
+        df["date"] = pd.to_datetime(df["date"], errors='coerce')
+        df = df.dropna(subset=["date"])
         df["value_num"] = df["value"].str.extract(r"(\d+)").astype(float)
         st.line_chart(df.set_index("date")["value_num"])
     except Exception as e:
